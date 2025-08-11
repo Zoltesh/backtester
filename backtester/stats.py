@@ -178,8 +178,17 @@ def compute_stats(
     start_val = ms_to_datetime_str(start_time)
     end_val = ms_to_datetime_str(end_time)
     duration_td = ms_to_timedelta(int(end_time - start_time))
-    max_dd_td = ms_to_timedelta(int(max_dd_dur_ms))
-    avg_dd_td = ms_to_timedelta(int(avg_dd_dur_ms))
+    # Round durations to data period resolution to mirror reference engine
+    diffs = np.diff(times) if times.size > 1 else np.array([60_000], dtype=np.int64)
+    # Use median to be robust to occasional gaps
+    period_ms = int(np.median(diffs)) if diffs.size else 60_000
+    def ceil_ms_to_period(ms: float, period: int) -> int:
+        if period <= 0:
+            return int(ms)
+        ms_int = int(ms)
+        return int(((ms_int + period - 1) // period) * period)
+    max_dd_td = ms_to_timedelta(ceil_ms_to_period(max_dd_dur_ms, period_ms))
+    avg_dd_td = ms_to_timedelta(ceil_ms_to_period(avg_dd_dur_ms, period_ms))
 
     stats: Dict[str, Any] = {}
     stats["Start"] = start_val
@@ -222,8 +231,14 @@ def compute_stats(
         xidx = trades["ExitIdx"].to_numpy()
         xidx = np.where(xidx < 0, len(eq) - 1, xidx)
         durations_ms = times[xidx] - times[eidx]
-        stats["Max. Trade Duration"] = ms_to_timedelta(int(np.max(durations_ms))) if durations_ms.size else timedelta(0)
-        stats["Avg. Trade Duration"] = ms_to_timedelta(int(np.mean(durations_ms))) if durations_ms.size else timedelta(0)
+        if durations_ms.size:
+            max_td_ms = ceil_ms_to_period(float(np.max(durations_ms)), period_ms)
+            avg_td_ms = ceil_ms_to_period(float(np.mean(durations_ms)), period_ms)
+            stats["Max. Trade Duration"] = ms_to_timedelta(max_td_ms)
+            stats["Avg. Trade Duration"] = ms_to_timedelta(avg_td_ms)
+        else:
+            stats["Max. Trade Duration"] = timedelta(0)
+            stats["Avg. Trade Duration"] = timedelta(0)
     else:
         stats["Max. Trade Duration"] = timedelta(0)
         stats["Avg. Trade Duration"] = timedelta(0)
