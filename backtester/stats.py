@@ -84,6 +84,7 @@ def compute_stats(
     *,
     first_trading_bar: int | None = None,
     strategy: Any | None = None,
+    annual_days: int | str = "auto",
 ) -> Dict[str, Any]:
     # Extract arrays
     eq = equity.to_numpy()
@@ -124,10 +125,13 @@ def compute_stats(
     day_rets = np.nan_to_num(day_rets, nan=0.0)
     gmean_day = _geometric_mean(day_rets) if day_rets.size else 0.0
 
-    # annual trading days estimate
-    weekdays = ((times // (24 * 3600 * 1000) + 4) % 7).astype(int)
-    have_weekends = (np.mean((weekdays == 5) | (weekdays == 6)) > (2 / 7) * 0.6)
-    annual_trading_days = 365 if have_weekends else 252
+    # annual trading days estimate (auto or override)
+    if isinstance(annual_days, int):
+        annual_trading_days = int(annual_days)
+    else:
+        weekdays = ((times // (24 * 3600 * 1000) + 4) % 7).astype(int)
+        have_weekends = (np.mean((weekdays == 5) | (weekdays == 6)) > (2 / 7) * 0.6)
+        annual_trading_days = 365 if have_weekends else 252
     annualized_return = (1 + gmean_day) ** annual_trading_days - 1
     volatility_ann = 0.0
     if day_rets.size:
@@ -143,12 +147,27 @@ def compute_stats(
     calmar = (annualized_return) / (-max_dd or np.nan) if max_dd else np.nan
 
     # Trades stats
-    n_trades = float(trades.height)
-    pnl = trades["PnL"].to_numpy() if trades.height else np.array([], dtype=float)
-    # Trade returns as fraction using invested notional abs(size)*entry_price
+    # Use only CLOSED trades for trade-based stats to mirror reference engine
+    n_trades = 0.0
+    pnl = np.array([], dtype=float)
+    size_abs = np.array([], dtype=float)
+    entry_price = np.array([], dtype=float)
+    commission_arr = np.array([], dtype=float)
     if trades.height:
-        entry_price = trades["EntryPrice"].to_numpy()
-        size_abs = np.abs(trades["Size"].to_numpy())
+        exit_idx_arr = trades["ExitIdx"].to_numpy()
+        closed_mask = exit_idx_arr >= 0
+        n_trades = float(np.sum(closed_mask))
+        if n_trades > 0:
+            pnl = trades["PnL"].to_numpy()[closed_mask]
+            size_abs = np.abs(trades["Size"].to_numpy()[closed_mask])
+            entry_price = trades["EntryPrice"].to_numpy()[closed_mask]
+            if "Commission" in trades.columns:
+                commission_arr = trades["Commission"].to_numpy()[closed_mask]
+            else:
+                commission_arr = np.zeros_like(pnl)
+    net_pnl = pnl - commission_arr
+    # Trade returns as fraction using invested notional abs(size)*entry_price
+    if n_trades > 0:
         denom = size_abs * entry_price
         with np.errstate(divide='ignore', invalid='ignore'):
             trade_returns = np.where(denom != 0, pnl / denom, 0.0)
@@ -159,11 +178,18 @@ def compute_stats(
     best_trade = float(np.max(trade_returns)) * 100 if trade_returns.size else 0.0
     worst_trade = float(np.min(trade_returns)) * 100 if trade_returns.size else 0.0
     avg_trade = float(_geometric_mean(trade_returns)) * 100 if trade_returns.size else 0.0
-    profit_factor = (
-        (np.sum(trade_returns[trade_returns > 0]) / (abs(np.sum(trade_returns[trade_returns < 0])) or np.nan)) if trade_returns.size else np.nan
-    )
+    # Profit Factor from trade returns (gross), which matches reference behavior better than net PnL
+    if 'trade_returns' in locals() and trade_returns.size:
+        pos = trade_returns > 0
+        neg = trade_returns < 0
+        sum_pos = float(np.sum(trade_returns[pos])) if np.any(pos) else 0.0
+        sum_neg = float(-np.sum(trade_returns[neg])) if np.any(neg) else 0.0
+        profit_factor = sum_pos / (sum_neg or np.nan)
+    else:
+        profit_factor = np.nan
     expectancy = float(np.mean(trade_returns)) * 100 if trade_returns.size else 0.0
-    sqn = (np.sqrt(n_trades) * (np.mean(pnl) / (np.std(pnl, ddof=1) or np.nan))) if pnl.size > 1 else np.nan
+    # SQN on monetary PnL (matches reference better than using returns)
+    sqn = (np.sqrt(n_trades) * (np.mean(pnl) / (np.std(pnl, ddof=0) or np.nan))) if pnl.size > 1 else np.nan
     # Kelly on monetary PnL
     if pnl.size:
         win_mask = pnl > 0
@@ -227,10 +253,15 @@ def compute_stats(
     stats["Avg. Trade [%]"] = float(avg_trade)
     # Trade durations require timestamps; approximate using index if missing
     if trades.height:
-        eidx = trades["EntryIdx"].to_numpy()
-        xidx = trades["ExitIdx"].to_numpy()
-        xidx = np.where(xidx < 0, len(eq) - 1, xidx)
-        durations_ms = times[xidx] - times[eidx]
+        eidx_arr = trades["EntryIdx"].to_numpy()
+        xidx_arr = trades["ExitIdx"].to_numpy()
+        mask = xidx_arr >= 0
+        if np.any(mask):
+            eidx = eidx_arr[mask]
+            xidx = xidx_arr[mask]
+            durations_ms = times[xidx] - times[eidx]
+        else:
+            durations_ms = np.array([], dtype=np.int64)
         if durations_ms.size:
             max_td_ms = ceil_ms_to_period(float(np.max(durations_ms)), period_ms)
             avg_td_ms = ceil_ms_to_period(float(np.mean(durations_ms)), period_ms)

@@ -123,6 +123,7 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
                 "ExitPrice": pl.Series([], pl.Float64),
                 "Size": pl.Series([], pl.Float64),
                 "PnL": pl.Series([], pl.Float64),
+                "Commission": pl.Series([], pl.Float64),
                 "Tag": pl.Series([], pl.Utf8),
             }
         )
@@ -134,6 +135,7 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
     exit_price = np.empty(m, dtype=np.float64)
     size = np.empty(m, dtype=np.float64)
     pnl = np.empty(m, dtype=np.float64)
+    commission = np.empty(m, dtype=np.float64)
     # For tags, build Python list then let Polars handle utf8
     tags: list[str] = [""] * m
     for i, t in enumerate(trades):
@@ -143,7 +145,9 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
         entry_price[i] = t.entry_price
         exit_price[i] = np.nan if t.exit_price is None else t.exit_price
         size[i] = t.size
-        pnl[i] = t.pnl()
+        # Report gross PnL excluding commissions for trade-level parity; commissions in separate column
+        pnl[i] = (0.0 if t.exit_price is None else (t.exit_price - t.entry_price) * t.direction * t.size)
+        commission[i] = float(getattr(t, "entry_commission", 0.0) + getattr(t, "exit_commission", 0.0))
         tags[i] = t.tag if t.tag is not None else ""
     return pl.DataFrame(
         {
@@ -154,6 +158,7 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
             "ExitPrice": pl.Series(exit_price),
             "Size": pl.Series(size),
             "PnL": pl.Series(pnl),
+            "Commission": pl.Series(commission),
             "Tag": pl.Series(tags, dtype=pl.Utf8),
         }
     )
