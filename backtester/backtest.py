@@ -121,6 +121,8 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
                 "Direction": pl.Series(name="Direction", values=[], dtype=pl.Int8),
                 "EntryPrice": pl.Series(name="EntryPrice", values=[], dtype=pl.Float64),
                 "ExitPrice": pl.Series(name="ExitPrice", values=[], dtype=pl.Float64),
+                "SL": pl.Series(name="SL", values=[], dtype=pl.Float64),
+                "TP": pl.Series(name="TP", values=[], dtype=pl.Float64),
                 "Size": pl.Series(name="Size", values=[], dtype=pl.Float64),
                 "PnL": pl.Series(name="PnL", values=[], dtype=pl.Float64),
                 "Commission": pl.Series(name="Commission", values=[], dtype=pl.Float64),
@@ -136,6 +138,8 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
     size = np.empty(m, dtype=np.float64)
     pnl = np.empty(m, dtype=np.float64)
     commission = np.empty(m, dtype=np.float64)
+    sl_arr = np.empty(m, dtype=np.float64)
+    tp_arr = np.empty(m, dtype=np.float64)
     # For tags, build Python list then let Polars handle utf8
     tags: list[str] = [""] * m
     for i, t in enumerate(trades):
@@ -149,6 +153,8 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
         pnl[i] = (0.0 if t.exit_price is None else (t.exit_price - t.entry_price) * t.direction * t.size)
         commission[i] = float(getattr(t, "entry_commission", 0.0) + getattr(t, "exit_commission", 0.0))
         tags[i] = t.tag if t.tag is not None else ""
+        sl_arr[i] = np.nan if getattr(t, "sl", None) is None else float(getattr(t, "sl"))
+        tp_arr[i] = np.nan if getattr(t, "tp", None) is None else float(getattr(t, "tp"))
     return pl.DataFrame(
         {
             "EntryIdx": pl.Series(name="EntryIdx", values=entry_idx),
@@ -157,6 +163,8 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
             "EntryPrice": pl.Series(name="EntryPrice", values=entry_price),
             "ExitPrice": pl.Series(name="ExitPrice", values=exit_price),
             "Size": pl.Series(name="Size", values=size),
+            "SL": pl.Series(name="SL", values=sl_arr),
+            "TP": pl.Series(name="TP", values=tp_arr),
             "PnL": pl.Series(name="PnL", values=pnl),
             "Commission": pl.Series(name="Commission", values=commission),
             "Tag": pl.Series(name="Tag", values=tags, dtype=pl.Utf8),

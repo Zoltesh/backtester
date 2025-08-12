@@ -158,7 +158,7 @@ class Broker:
             tp_hit = (open_trade.tp is not None) and (high >= open_trade.tp)
             if sl_hit and tp_hit:
                 # Prioritize SL like reference (SL orders processed first)
-                # Long SL: gap-through fills at open if worse than stop
+                # Long SL: price = min(open, stop)
                 self._close_trade(open_trade, index, min(open_px, float(open_trade.sl)))
                 return True
             if sl_hit:
@@ -166,14 +166,14 @@ class Broker:
                 self._close_trade(open_trade, index, min(open_px, float(open_trade.sl)))
                 return True
             if tp_hit:
-                # Long TP (limit sell): fill at max(open, limit) to mirror reference behavior
+                # Long TP (limit sell): fill at max(open, limit) like backtesting.py
                 self._close_trade(open_trade, index, max(open_px, float(open_trade.tp)))
                 return True
         else:
             sl_hit = (open_trade.sl is not None) and (high >= open_trade.sl)
             tp_hit = (open_trade.tp is not None) and (low <= open_trade.tp)
             if sl_hit and tp_hit:
-                # Prioritize SL for shorts as well; gap-through fills at open if worse than stop
+                # Prioritize SL for shorts as well; Short SL: price = max(open, stop)
                 self._close_trade(open_trade, index, max(open_px, float(open_trade.sl)))
                 return True
             if sl_hit:
@@ -181,7 +181,7 @@ class Broker:
                 self._close_trade(open_trade, index, max(open_px, float(open_trade.sl)))
                 return True
             if tp_hit:
-                # Short TP (limit buy): fill at min(open, limit)
+                # Short TP (limit buy): fill at min(open, limit) like backtesting.py
                 self._close_trade(open_trade, index, min(open_px, float(open_trade.tp)))
                 return True
         return False
@@ -225,12 +225,17 @@ class Broker:
                     if (abs(int(size_units)) * adjusted_price_plus_commission) > (margin_available * self._leverage):
                         continue
 
-                # Open trade at adjusted price; commission computed from unadjusted fill price
-                # Reference cash accounting deducts only commission at open
+                # SL/TP validation relative to entry price to mirror backtesting.py
                 if direction == 1:
-                    pass
+                    if sl is not None and not (sl < entry_px):
+                        raise ValueError(f"Long orders require SL ({sl}) < ENTRY ({entry_px})")
+                    if tp is not None and not (entry_px < tp):
+                        raise ValueError(f"Long orders require ENTRY ({entry_px}) < TP ({tp})")
                 else:
-                    pass
+                    if tp is not None and not (tp < entry_px):
+                        raise ValueError(f"Short orders require TP ({tp}) < ENTRY ({entry_px})")
+                    if sl is not None and not (entry_px < sl):
+                        raise ValueError(f"Short orders require ENTRY ({entry_px}) < SL ({sl})")
                 entry_commission = self._commission(size_units, commission_base_price)
                 self.cash -= entry_commission
                 trade = Trade(

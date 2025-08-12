@@ -117,13 +117,18 @@ def compute_stats(
 
     # Daily resample for annualized stats (mirror backtesting.py)
     daily_last = _resample_daily_last(times, eq)
-    day_rets = (
+    # Base day-to-day returns (first element omitted like pandas pct_change)
+    base_day_rets = (
         np.diff(daily_last) / np.where(daily_last[:-1] == 0, np.nan, daily_last[:-1])
         if len(daily_last) > 1
         else np.array([], dtype=float)
     )
-    day_rets = np.nan_to_num(day_rets, nan=0.0)
-    gmean_day = _geometric_mean(day_rets) if day_rets.size else 0.0
+    base_day_rets = np.nan_to_num(base_day_rets, nan=0.0)
+    # Geometric mean should include an initial NaN (treated as 0) like pandas pct_change result
+    if base_day_rets.size:
+        gmean_day = _geometric_mean(np.r_[np.nan, base_day_rets])
+    else:
+        gmean_day = 0.0
 
     # annual trading days estimate (auto or override)
     if isinstance(annual_days, int):
@@ -134,15 +139,15 @@ def compute_stats(
         annual_trading_days = 365 if have_weekends else 252
     annualized_return = (1 + gmean_day) ** annual_trading_days - 1
     volatility_ann = 0.0
-    if day_rets.size:
-        var = float(np.var(day_rets, ddof=1)) if day_rets.size > 1 else float(np.var(day_rets, ddof=0))
+    if base_day_rets.size:
+        var = float(np.var(base_day_rets, ddof=1)) if base_day_rets.size > 1 else float(np.var(base_day_rets, ddof=0))
         volatility_ann = float(
             np.sqrt((var + (1 + gmean_day) ** 2) ** annual_trading_days - (1 + gmean_day) ** (2 * annual_trading_days))
         )
 
     # Sharpe/Sortino/Calmar
     sharpe = (annualized_return * 100) / (volatility_ann * 100 or np.nan) if volatility_ann else np.nan
-    downside = np.sqrt(np.mean(np.clip(day_rets, -np.inf, 0) ** 2)) if day_rets.size else 0.0
+    downside = np.sqrt(np.mean(np.clip(base_day_rets, -np.inf, 0) ** 2)) if base_day_rets.size else 0.0
     sortino = (annualized_return) / (downside * np.sqrt(annual_trading_days) or np.nan) if downside else np.nan
     calmar = (annualized_return) / (-max_dd or np.nan) if max_dd else np.nan
 
