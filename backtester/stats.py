@@ -188,8 +188,8 @@ def compute_stats(
     else:
         profit_factor = np.nan
     expectancy = float(np.mean(trade_returns)) * 100 if trade_returns.size else 0.0
-    # SQN on monetary PnL (matches reference better than using returns)
-    sqn = (np.sqrt(n_trades) * (np.mean(pnl) / (np.std(pnl, ddof=0) or np.nan))) if pnl.size > 1 else np.nan
+    # SQN on monetary PnL (match backtesting.py: pandas Series std uses ddof=1)
+    sqn = (np.sqrt(n_trades) * (np.mean(pnl) / (np.std(pnl, ddof=1) or np.nan))) if pnl.size > 1 else np.nan
     # Kelly on monetary PnL
     if pnl.size:
         win_mask = pnl > 0

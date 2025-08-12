@@ -101,12 +101,12 @@ class Broker:
         return True if t is None else (t.direction > 0)
 
     def _update_equity(self, price: float) -> None:
-        # Equity is cash plus mark-to-market value of open position
+        # Equity is cash plus mark-to-market PnL of open position (matches backtesting.py)
         open_trade = self._open_trade_ref if (self._open_trade_ref and self._open_trade_ref.is_open()) else None
-        position_value = 0.0
+        unrealized_pl = 0.0
         if open_trade is not None:
-            position_value = open_trade.direction * open_trade.size * price
-        self._equity = self.cash + position_value
+            unrealized_pl = open_trade.direction * open_trade.size * (price - open_trade.entry_price)
+        self._equity = self.cash + unrealized_pl
 
     def _commission(self, order_size: float, price: float) -> float:
         return self._commission_fixed + abs(order_size) * price * self._commission_relative
@@ -135,15 +135,11 @@ class Broker:
             return
         trade.exit_index = index
         trade.exit_price = price
-        # Close proceeds/cost and commission
-        if trade.direction == 1:
-            # Close long: receive proceeds
-            self.cash += trade.size * price
-        else:
-            # Close short: pay back shares
-            self.cash -= trade.size * price
+        # Realize PnL and apply commission (match backtesting.py accounting)
+        realized_pl = trade.direction * trade.size * (price - trade.entry_price)
         close_commission = self._commission(trade.size, price)
         trade.exit_commission = close_commission
+        self.cash += realized_pl
         self.cash -= close_commission
         self._update_equity(price)
         if trade is self._open_trade_ref:
@@ -162,38 +158,36 @@ class Broker:
             tp_hit = (open_trade.tp is not None) and (high >= open_trade.tp)
             if sl_hit and tp_hit:
                 # Prioritize SL like reference (SL orders processed first)
-                self._close_trade(open_trade, index, max(open_px, float(open_trade.sl)))
+                # Long SL: gap-through fills at open if worse than stop
+                self._close_trade(open_trade, index, min(open_px, float(open_trade.sl)))
                 return True
             if sl_hit:
-                # Long SL: price = max(open, stop)
-                self._close_trade(open_trade, index, max(open_px, float(open_trade.sl)))
+                # Long SL: price = min(open, stop)
+                self._close_trade(open_trade, index, min(open_px, float(open_trade.sl)))
                 return True
             if tp_hit:
-                # Long TP: price = max(open, limit)
+                # Long TP (limit sell): fill at max(open, limit) to mirror reference behavior
                 self._close_trade(open_trade, index, max(open_px, float(open_trade.tp)))
                 return True
         else:
             sl_hit = (open_trade.sl is not None) and (high >= open_trade.sl)
             tp_hit = (open_trade.tp is not None) and (low <= open_trade.tp)
             if sl_hit and tp_hit:
-                # Prioritize SL for shorts as well
-                self._close_trade(open_trade, index, min(open_px, float(open_trade.sl)))
+                # Prioritize SL for shorts as well; gap-through fills at open if worse than stop
+                self._close_trade(open_trade, index, max(open_px, float(open_trade.sl)))
                 return True
             if sl_hit:
-                # Short SL: price = min(open, stop)
-                self._close_trade(open_trade, index, min(open_px, float(open_trade.sl)))
+                # Short SL: price = max(open, stop)
+                self._close_trade(open_trade, index, max(open_px, float(open_trade.sl)))
                 return True
             if tp_hit:
-                # Short TP: price = min(open, limit)
+                # Short TP (limit buy): fill at min(open, limit)
                 self._close_trade(open_trade, index, min(open_px, float(open_trade.tp)))
                 return True
         return False
 
     def on_bar(self, index: int) -> None:
-        # 1) Handle SL/TP first; do not early-return so pending orders can be processed same bar
-        self._process_contingent(index)
-
-        # 2) Process pending market orders at bar fill price (open or prev close)
+        # 1) Process pending market orders at bar fill price (open or prev close)
         fill_px = self._price_at(index)
         # Track whether a new trade opened (unused; contingent processing deferred)
         # new_trade_opened flag intentionally removed to avoid linter warning
@@ -203,56 +197,40 @@ class Broker:
             for order in pending:
                 direction, req_size, sl, tp, tag = order
 
-                # Exclusive: close opposite trade first at raw fill price
-                t = self._open_trade_ref
-                if self.exclusive_orders and t is not None and t.is_open() and t.direction != direction:
-                    self._close_trade(t, index, fill_px)
+                # Exclusive: close all open trades first (mirror reference semantics)
+                if self.exclusive_orders and self._open_trade_ref is not None and self._open_trade_ref.is_open():
+                    self._close_trade(self._open_trade_ref, index, fill_px)
 
-                # If exclusive and same direction is already open, ignore additional entries (no pyramiding)
-                t = self._open_trade_ref
-                if self.exclusive_orders and t is not None and t.is_open() and t.direction == direction:
-                    continue
+                # After potential close above, recompute available cash-based notional for sizing
 
-                # After potential close above, recompute equity/margin availability
-                open_trade = self._open_trade_ref if (self._open_trade_ref and self._open_trade_ref.is_open()) else None
-                margin_used = 0.0
-                if open_trade is not None:
-                    margin_used = abs(open_trade.entry_price * open_trade.size) / self._leverage
-                # Use last_price semantics (current close) for equity like reference engine
-                last_px = float(self._close_col[index])
-                equity_now = self.cash + (
-                    0.0 if open_trade is None else (last_px - open_trade.entry_price) * open_trade.direction * open_trade.size
-                )
-                margin_available = max(0.0, equity_now - margin_used)
+                # Use cash for available liquidity approximation (matches reference behavior closely
+                # because reference uses equity - used margin; with exclusive orders there is at most one trade)
+                margin_available = max(0.0, self.cash)
 
                 # Determine integer units (reference-like sizing)
                 entry_px = fill_px * (1 + (self.spread if direction > 0 else -self.spread))
-                # Commission base price selection
+                # Commission base price selection (reference uses unadjusted fill price)
                 commission_base_price = fill_px if self._commission_on == "pre" else entry_px
-                variable_comm_per_unit = self._variable_commission_per_unit(commission_base_price)
-                per_unit_cost = entry_px + variable_comm_per_unit
-                fixed_commission = self._commission_fixed
+                adjusted_price_plus_commission = entry_px + self._commission(req_size, commission_base_price)
                 if 0 < req_size < 1:
                     available_notional = margin_available * self._leverage * abs(req_size)
-                    # Account for fixed commission once
-                    budget = max(0.0, available_notional - fixed_commission)
-                    units = int(budget // per_unit_cost) if per_unit_cost > 0 else 0
+                    units = int(available_notional // adjusted_price_plus_commission) if adjusted_price_plus_commission > 0 else 0
                     size_units = float(max(units, 0))
                     if size_units <= 0:
                         # Fractional order canceled due to insufficient margin
                         continue
                 else:
                     size_units = float(int(abs(req_size)))
-                    # Liquidity check: cancel absolute-sized order if unaffordable including fixed commission
-                    total_cost = size_units * per_unit_cost + fixed_commission
-                    if total_cost > margin_available * self._leverage:
+                    # Liquidity check mirroring reference: compare against adjusted_price_plus_commission computed with original order size
+                    if (abs(int(size_units)) * adjusted_price_plus_commission) > (margin_available * self._leverage):
                         continue
 
                 # Open trade at adjusted price; commission computed from unadjusted fill price
+                # Reference cash accounting deducts only commission at open
                 if direction == 1:
-                    self.cash -= size_units * entry_px
+                    pass
                 else:
-                    self.cash += size_units * entry_px
+                    pass
                 entry_commission = self._commission(size_units, commission_base_price)
                 self.cash -= entry_commission
                 trade = Trade(
@@ -267,9 +245,10 @@ class Broker:
                 )
                 self._trades.append(trade)
                 self._open_trade_ref = trade
-                # Allow contingent SL/TP to trigger within same bar (reference reprocess)
+                # Allow contingent SL/TP to trigger within the same bar immediately after a fill
+                self._process_contingent(index)
 
-        # 2b) If a new trade was opened, allow SL/TP to trigger within the same bar
+        # 2) After all orders, ensure contingent orders are processed for any remaining open trade
         if self._open_trade_ref is not None and self._open_trade_ref.is_open():
             self._process_contingent(index)
 

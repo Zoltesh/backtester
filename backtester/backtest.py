@@ -116,15 +116,15 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
     if not trades:
         return pl.DataFrame(
             {
-                "EntryIdx": pl.Series([], pl.Int64),
-                "ExitIdx": pl.Series([], pl.Int64),
-                "Direction": pl.Series([], pl.Int8),
-                "EntryPrice": pl.Series([], pl.Float64),
-                "ExitPrice": pl.Series([], pl.Float64),
-                "Size": pl.Series([], pl.Float64),
-                "PnL": pl.Series([], pl.Float64),
-                "Commission": pl.Series([], pl.Float64),
-                "Tag": pl.Series([], pl.Utf8),
+                "EntryIdx": pl.Series(name="EntryIdx", values=[], dtype=pl.Int64),
+                "ExitIdx": pl.Series(name="ExitIdx", values=[], dtype=pl.Int64),
+                "Direction": pl.Series(name="Direction", values=[], dtype=pl.Int8),
+                "EntryPrice": pl.Series(name="EntryPrice", values=[], dtype=pl.Float64),
+                "ExitPrice": pl.Series(name="ExitPrice", values=[], dtype=pl.Float64),
+                "Size": pl.Series(name="Size", values=[], dtype=pl.Float64),
+                "PnL": pl.Series(name="PnL", values=[], dtype=pl.Float64),
+                "Commission": pl.Series(name="Commission", values=[], dtype=pl.Float64),
+                "Tag": pl.Series(name="Tag", values=[], dtype=pl.Utf8),
             }
         )
     m = len(trades)
@@ -151,15 +151,15 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
         tags[i] = t.tag if t.tag is not None else ""
     return pl.DataFrame(
         {
-            "EntryIdx": pl.Series(entry_idx),
-            "ExitIdx": pl.Series(exit_idx),
-            "Direction": pl.Series(direction),
-            "EntryPrice": pl.Series(entry_price),
-            "ExitPrice": pl.Series(exit_price),
-            "Size": pl.Series(size),
-            "PnL": pl.Series(pnl),
-            "Commission": pl.Series(commission),
-            "Tag": pl.Series(tags, dtype=pl.Utf8),
+            "EntryIdx": pl.Series(name="EntryIdx", values=entry_idx),
+            "ExitIdx": pl.Series(name="ExitIdx", values=exit_idx),
+            "Direction": pl.Series(name="Direction", values=direction),
+            "EntryPrice": pl.Series(name="EntryPrice", values=entry_price),
+            "ExitPrice": pl.Series(name="ExitPrice", values=exit_price),
+            "Size": pl.Series(name="Size", values=size),
+            "PnL": pl.Series(name="PnL", values=pnl),
+            "Commission": pl.Series(name="Commission", values=commission),
+            "Tag": pl.Series(name="Tag", values=tags, dtype=pl.Utf8),
         }
     )
 
