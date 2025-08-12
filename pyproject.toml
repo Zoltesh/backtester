@@ -12,6 +12,7 @@ numpy = "^2.0.0"
 pandas = "^2.2.2"
 bokeh = "^3.6.2"
 pyarrow = "^21.0.0"
+xgboost = "^3.0.4"
 
 
 [build-system]

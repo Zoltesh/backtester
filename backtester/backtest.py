@@ -140,6 +140,7 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
     commission = np.empty(m, dtype=np.float64)
     sl_arr = np.empty(m, dtype=np.float64)
     tp_arr = np.empty(m, dtype=np.float64)
+    trade_ids: list[str] = [""] * m
     # For tags, build Python list then let Polars handle utf8
     tags: list[str] = [""] * m
     for i, t in enumerate(trades):
@@ -155,6 +156,7 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
         tags[i] = t.tag if t.tag is not None else ""
         sl_arr[i] = np.nan if getattr(t, "sl", None) is None else float(getattr(t, "sl"))
         tp_arr[i] = np.nan if getattr(t, "tp", None) is None else float(getattr(t, "tp"))
+        trade_ids[i] = getattr(t, "trade_id", "")
     return pl.DataFrame(
         {
             "EntryIdx": pl.Series(name="EntryIdx", values=entry_idx),
@@ -168,6 +170,7 @@ def _trades_to_df(trades, data: pl.DataFrame) -> pl.DataFrame:
             "PnL": pl.Series(name="PnL", values=pnl),
             "Commission": pl.Series(name="Commission", values=commission),
             "Tag": pl.Series(name="Tag", values=tags, dtype=pl.Utf8),
+            "TradeId": pl.Series(name="TradeId", values=trade_ids, dtype=pl.Utf8),
         }
     )
 

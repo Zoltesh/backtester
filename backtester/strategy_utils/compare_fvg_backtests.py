@@ -22,8 +22,8 @@ async def load_sample_data() -> pl.DataFrame | Dict[str, pl.DataFrame]:
     df = await loader.load_ohlcv_between_dates(
         symbols=["SOL-USDC"],
         timeframes=["1m", "5m", "15m", "30m", "1h", "6h"],
-        start_date="2025-01-01",
-        end_date="2025-01-31",
+        start_date="2024-01-01",
+        end_date="2025-07-31",
     )
     return df
 
@@ -104,9 +104,9 @@ def main() -> None:
     )
     t0 = perf_counter()
     pl_res = pl_bt.run(
-        fvg_threshold=0.05,
-        position_size=0.9,
-        max_fvg_age=5,
+        fvg_threshold=0.01,
+        position_size=0.3,
+        max_fvg_age=2,
         profit_target=0.1,
         loss_target=0.1,
         precomputed_fvgs=fvgs,
@@ -118,9 +118,9 @@ def main() -> None:
     pd_bt = PDBacktest(pd_df, FVGStrategyPD, cash=10_000.0, commission=0.002, exclusive_orders=True, finalize_trades=True)
     t1 = perf_counter()
     pd_stats = pd_bt.run(
-        fvg_threshold=0.05,
-        position_size=0.9,
-        max_fvg_age=5,
+        fvg_threshold=0.01,
+        position_size=0.3,
+        max_fvg_age=2,
         profit_target=0.1,
         loss_target=0.1,
         precomputed_fvgs=fvgs,
@@ -174,6 +174,56 @@ def main() -> None:
         if str(k) == "_strategy":
             break
 
+    # Write outputs: FVGs (flattened ema_htf_bias) and polars trades
+    out_dir = Path("data/outputs")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine suffix from symbol/timeframe if present
+    def _first_str(df: pl.DataFrame, col: str) -> str | None:
+        if col in df.columns and df.height:
+            try:
+                return str(df.select(pl.col(col).first()).item())
+            except Exception:
+                try:
+                    return str(df.get_column(col)[0])
+                except Exception:
+                    return None
+        return None
+
+    symbol = _first_str(base_pl_bt, "symbol")
+    tf = _first_str(base_pl_bt, "timeframe")
+    suffix = ""
+    parts = [p for p in [symbol, tf] if p]
+    if parts:
+        suffix = "_" + "_".join(parts)
+
+    # Flatten FVGs ema_htf_bias into columns
+    all_bias_tfs: set[str] = set()
+    for f in fvgs:
+        bias = f.get("ema_htf_bias")
+        if isinstance(bias, dict):
+            all_bias_tfs.update(bias.keys())
+
+    flat_fvgs: list[dict] = []
+    has_ts = "timestamp" in base_pl_bt.columns
+    ts_col = base_pl_bt.get_column("timestamp") if has_ts else None
+    for f in fvgs:
+        rec = dict(f)
+        bias = rec.pop("ema_htf_bias", None) or {}
+        for tf_key in all_bias_tfs:
+            rec[f"ema_htf_{tf_key}"] = bias.get(tf_key)
+        if has_ts:
+            idx = int(rec.get("bar_index", -1))
+            if 0 <= idx < base_pl_bt.height:
+                rec["timestamp"] = int(ts_col[idx])  # epoch ms
+        flat_fvgs.append(rec)
+
+    fvgs_df = pl.DataFrame(flat_fvgs) if flat_fvgs else pl.DataFrame({})
+    fvgs_path = out_dir / f"fvgs{suffix}.csv"
+    fvgs_df.write_csv(fvgs_path)
+
+    trades_path = out_dir / f"trades_pl{suffix}.csv"
+    pl_res.trades.write_csv(trades_path)
 
 if __name__ == "__main__":
     main()

@@ -5,6 +5,7 @@ from typing import List, Optional
 
 import numpy as np
 import polars as pl
+import uuid
 
 
 @dataclass(slots=True)
@@ -21,6 +22,7 @@ class Trade:
     # Net accounting
     entry_commission: float = 0.0
     exit_commission: float = 0.0
+    trade_id: str = ""
 
     def is_open(self) -> bool:
         return self.exit_index is None
@@ -247,6 +249,7 @@ class Broker:
                     tp=tp,
                     tag=tag,
                     entry_commission=entry_commission,
+                    trade_id=uuid.uuid4().hex,
                 )
                 self._trades.append(trade)
                 self._open_trade_ref = trade
