@@ -5,7 +5,7 @@ import polars as pl
 try:  # pragma: no cover - import fallback
     from .ema_bias_matrix import EMABiasMatrix
 except Exception:  # pragma: no cover
-    from backtester.strategy_utils.ema_bias_matrix import EMABiasMatrix
+    from backtester.strategy_utils.fvg_utils.ema_bias_matrix import EMABiasMatrix
 
 class FairValueGapDetector:
     """

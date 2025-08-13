@@ -7,9 +7,9 @@ from time import perf_counter
 import math
 
 from data_loader.data_loader import DataLoader
-from backtester.strategy_utils.fvg_detector import FairValueGapDetector
+from backtester.strategy_utils.fvg_utils.fvg_detector import FairValueGapDetector
 from backtester.backtest import Backtest as PLBacktest
-from backtester.strategy_utils.fvg_strategy import FVGStrategy as PLFVGStrategy
+from backtester.strategy_utils.fvg_utils.fvg_strategy import FVGStrategy as PLFVGStrategy
 
 # Traditional backtesting.py
 from backtesting import Backtest as PDBacktest
